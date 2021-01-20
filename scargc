@@ -1,916 +1,881 @@
-/*
- *    EvaluatePrequential.java
- *    Copyright (C) 2007 University of Waikato, Hamilton, New Zealand
- *    @author Richard Kirkby (rkirkby@cs.waikato.ac.nz)
- *    @author Albert Bifet (abifet at cs dot waikato dot ac dot nz)
- *
- *    This program is free software; you can redistribute it and/or modify
- *    it under the terms of the GNU General Public License as published by
- *    the Free Software Foundation; either version 3 of the License, or
- *    (at your option) any later version.
- *
- *    This program is distributed in the hope that it will be useful,
- *    but WITHOUT ANY WARRANTY; without even the implied warranty of
- *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *    GNU General Public License for more details.
- *
- *    You should have received a copy of the GNU General Public License
- *    along with this program. If not, see <http://www.gnu.org/licenses/>.
- *    
- */
-package moa.tasks;
+package moa.labelscarcity;
 
-import java.io.BufferedReader;
-import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileNotFoundException;
-import java.io.FileOutputStream;
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.InputStreamReader;
-import java.io.OutputStreamWriter;
-import java.io.PrintStream;
-import java.io.Reader;
+import com.github.javacliparser.FlagOption;
+import com.github.javacliparser.IntOption;
+import com.github.javacliparser.FloatOption;
+import com.github.javacliparser.ListOption;
+import com.github.javacliparser.Option;
+import com.github.javacliparser.MultiChoiceOption;
+import com.yahoo.labs.samoa.instances.Attribute;
+import com.yahoo.labs.samoa.instances.DenseInstance;
+import com.yahoo.labs.samoa.instances.Instance;
+import com.yahoo.labs.samoa.instances.Instances;
+import com.yahoo.labs.samoa.instances.InstancesHeader;
+import com.yahoo.labs.samoa.instances.MultiLabelInstance;
+
 import java.util.ArrayList;
-import java.util.HashSet;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.LinkedList;
 import java.util.List;
-import java.util.Random;
+import java.util.Vector;
 
-import org.apache.poi.EncryptedDocumentException;
-import org.apache.poi.ss.usermodel.Cell;
-import org.apache.poi.ss.usermodel.Row;
-import org.apache.poi.xssf.usermodel.XSSFSheet;
-import org.apache.poi.xssf.usermodel.XSSFWorkbook;
-
+import moa.classifiers.AbstractClassifier;
 import moa.classifiers.Classifier;
+import moa.classifiers.MultiClassClassifier;
+import moa.core.Measurement;
+import moa.evaluation.LearningPerformanceEvaluator;
+import moa.evaluation.MeasureCollection;
+import moa.evaluation.MembershipMatrix;
+import moa.gui.visualization.DataPoint;
+import moa.labelscarcity.HDWM.HTBaseLearner;
+import moa.options.AbstractClassOption;
+import moa.options.ClassOption;
+import weka.core.Utils;
+
+
+import java.util.ArrayList;
+import java.util.List;
 import moa.classifiers.SSLAbstractClassifier;
 import moa.classifiers.SSLClassifier;
+import moa.classifiers.core.attributeclassobservers.AttributeClassObserver;
+import moa.classifiers.core.attributeclassobservers.GaussianNumericAttributeClassObserver;
+import moa.classifiers.core.attributeclassobservers.NominalAttributeClassObserver;
+import moa.classifiers.core.driftdetection.ChangeDetector;
+import moa.cluster.Cluster;
 import moa.cluster.Clustering;
+import moa.cluster.SphereCluster;
 import moa.clusterers.AbstractClusterer;
+import moa.clusterers.ClusterGenerator;
+import moa.clusterers.Clusterer;
+import moa.clusterers.clustream.ClustreamKernel;
+import moa.clusterers.outliers.MyBaseOutlierDetector;
+import moa.core.AutoExpandVector;
 import moa.core.DoubleVector;
 import moa.core.Example;
-import moa.core.InputStreamProgressMonitor;
+import moa.core.FastVector;
 import moa.core.InstanceExample;
 import moa.core.Measurement;
 import moa.core.ObjectRepository;
-import moa.core.TimingUtils;
-import moa.evaluation.WindowClassificationPerformanceEvaluator;
-import moa.gui.TextViewerPanel;
-import moa.gui.ssl.SSLSetupTab;
-import moa.gui.ssl.SSLVisualTab;
-import moa.gui.visualization.DataPoint;
-import moa.gui.visualization.RunSSLVisualizer;
-import moa.gui.visualization.StreamPanel;
-import moa.evaluation.EWMAClassificationPerformanceEvaluator;
-import moa.evaluation.FadingFactorClassificationPerformanceEvaluator;
-import moa.evaluation.LearningCurve;
-import moa.evaluation.LearningEvaluation;
-import moa.evaluation.LearningPerformanceEvaluator;
-import moa.evaluation.LearningSSLEvaluation;
-import moa.evaluation.MeasureCollection;
-import moa.learners.Learner;
-import moa.learners.SSLearner;
-import moa.options.AbstractOptionHandler;
 import moa.options.ClassOption;
-
-import com.github.javacliparser.FileOption;
-import com.github.javacliparser.FlagOption;
-import com.github.javacliparser.FloatOption;
-import com.github.javacliparser.IntOption;
-import com.github.javacliparser.ListOption;
-import com.github.javacliparser.MultiChoiceOption;
-import com.github.javacliparser.Option;
-import com.github.javacliparser.Options;
-
 import moa.streams.ExampleStream;
 import moa.streams.InstanceStream;
-import moa.tasks.TaskThread;
-import moa.tasks.meta.ALTaskThread;
-import moa.tasks.meta.SSLMainTask;
-
-import com.yahoo.labs.samoa.instances.Instance;
-import com.yahoo.labs.samoa.instances.InstanceImpl;
-import com.yahoo.labs.samoa.instances.Instances;
-import com.yahoo.labs.samoa.instances.InstancesHeader;
-
-import moa.core.Utils;
+import moa.streams.clustering.ClusteringStream;
+import moa.tasks.TaskMonitor;
+import weka.core.Utils;
+import moa.labelscarcity.mCentroid;
 
 /**
- * Task for evaluating a classifier on a stream by testing then training with each example in sequence.
+ * SCARGC Implementation 
  *
- * @author Richard Kirkby (rkirkby@cs.waikato.ac.nz)
- * @author Albert Bifet (abifet at cs dot waikato dot ac dot nz)
- * @version $Revision: 7 $
+ * @author Mobin Idrees (mmadrees@uod.edu.sa)
+ * @supervisor Dr. Frederic Stahl (f.t.stahl@reading.ac.uk)  
+ * 
+ * Souza, V. M., Silva, D. F., Gama, J., & Batista, G. E. (2015, June). 
+ * Data stream classification guided by clustering on nonstationary environments and 
+ * extreme verification latency. In Proceedings of the 2015 SIAM International 
+ * Conference on Data Mining (pp. 873-881). Society for Industrial and Applied Mathematics.
+
  */
-public class EvaluateSSLPrequential extends SSLMainTask {
 
-    @Override
-    public String getPurposeString() {
-        return "Evaluates a classifier on a stream by testing then training with each example in sequence.";
-    }
-
-    private static final long serialVersionUID = 1L;
-
-    public ClassOption learnerOption = new ClassOption("SSLearner", 'l',
-    	      "Classifier to train.", SSLAbstractClassifier.class, "moa.labelscarcity.SSLearner");
-
-    public ClassOption streamOption = new ClassOption("stream", 's',
-    	             "Stream to learn from.", ExampleStream.class,
-    	             "generators.RandomTreeGenerator");
+public class SCARGC extends SSLAbstractClassifier {
+	private static final long serialVersionUID = 1L;
+	
+	 // Classifier Variables
+    public ClassOption baseLearnerOption = new ClassOption("baseLearner", 'l',
+            "Base classifiers to train.", Classifier.class, "bayes.NaiveBayes");
+    
+    
+	// Prelabeling option
+    public MultiChoiceOption prelableing = new MultiChoiceOption(
+            "prelableingMethod", 'x', "prediction Option", new String[]{
+            		"No Prelabeling", "Use Self Learning", "Clustering", "Active Switching"},
+            new String[]{"No Prelabeling ",
+                "Use Self Learning", "Clustering","Active Switching"
+            }, 2);
+    
+	// Prediction option
+    public MultiChoiceOption Prediction = new MultiChoiceOption(
+            "PredictionMethod", 'y', "prediction Option", new String[]{
+            		"Base Classifier", "Clustering","Switching of Clusters and Classifiers"},
+            new String[]{"Base Classifier", "Clustering","Switching of Clusters and Classifiers"
+            }, 1);
 	   
-	// Prediction option
-    public MultiChoiceOption m_normalize = new MultiChoiceOption(
-            "m_normalize", 'k', "Normalize", new String[]{"Normalize Stream","Do not Normalize Stream"},
-            new String[]{"Normalize Stream","Do not Normalize Stream"}, 1);
-
-    
-    public ClassOption evaluatorOption = new ClassOption("evaluator", 'e',
-            "Classification performance evaluation method.",
-            LearningPerformanceEvaluator.class,
-            "BasicClassificationPerformanceEvaluator");
-    
-    
-    public FloatOption noiseLevelOption2 = new FloatOption("noiseLevel", 'N',
-            "Noise level", 0, 0, 1);
-    
-    
-	// Prediction option
-
-	// Prediction option
-   // public MultiChoiceOption m_dUlRateTrain = new MultiChoiceOption(
-     //       "labelRatioTrain", 'z', "label ratio", new String[]{"first 50 labeled","0.5 percent initial Labeled","5 percent initial of every batch","100 percent Labeled", "Random"},
-       //     new String[]{"first 50 labeled","0.5 percent initial Labeled","5 percent initial of every batch","100 percent Labeled","Random"}, 1);
-    
-
-    public MultiChoiceOption m_dUlRateTrain = new MultiChoiceOption(
-            "labelRatioTrain", 'z', "label ratio", new String[]{"first 50 labeled","0.5 percent initial Labeled","5 percent initial of every batch","100 percent Labeled", "Random"},
-            new String[]{"first 50 labeled","0.5 percent initial Labeled","5 percent initial of every batch","100 percent Labeled","Random"}, 1);
-    
-    public IntOption m_dUlRate = new IntOption("rateUnlabeled", 'r',
-            " the ratio of unlabeled Instances.", 1, 0,
-            100);
-    
-    public IntOption instanceLimitOption = new IntOption("instanceLimit", 'i',
-            "Maximum number of instances to test/train on  (-1 = no limit).",
-            1000, -1, Integer.MAX_VALUE);
-
-    public IntOption timeLimitOption = new IntOption("timeLimit", 't',
-            "Maximum number of seconds to test/train for (-1 = no limit).", -1,
-            -1, Integer.MAX_VALUE);
-
-    public IntOption sampleFrequencyOption = new IntOption("sampleFrequency",
-            'f',
-            "How many instances between samples of the learning performance.",
-            100, 0, Integer.MAX_VALUE);
-
-    public IntOption memCheckFrequencyOption = new IntOption(
-            "memCheckFrequency", 'q',
-            "How many instances between memory bound checks.", 100000, 0,
-            Integer.MAX_VALUE);
-
-    public FileOption dumpFileOption = new FileOption("dumpFile", 'd',
-            "File to append intermediate csv results to.", null, "csv", true);
-
-    public FileOption outputPredictionFileOption = new FileOption("outputPredictionFile", 'o',
-            "File to append output predictions to.", null, "pred", true);
-
-    //New for prequential method DEPRECATED
-    public IntOption widthOption = new IntOption("width",
-            'w', "Size of Window", 1000);
-
-    public FloatOption alphaOption = new FloatOption("alpha",
-            'a', "Fading factor or exponential smoothing factor", .01);
-    
-    public FlagOption mixedOption = new FlagOption("mixed", 'm',
-            "temp.");
-    //End New for prequential methods
-
-    // Label Scarcity Variables
-    private double prob = 0.0;
-    private long unLabeledCount = 0;
-    protected InstancesHeader[] header;
-    protected Random instanceRandom;
-
-    
-    // Clustering Variables
-    protected ArrayList<Clustering> clusterer = new ArrayList<>();
-    private Clustering macro0 = null;
-    private Clustering micro0 = null;
-    private ArrayList<DataPoint> pointarray0 = null;
-    private Clustering gtClustering0 = null;
-    private int clusterIndex = 0;
-    /* reference to the log panel */
-    private TextViewerPanel m_logPanel;
-    //private ClusteringStream m_stream0 = null;
-
-    protected ArrayList<ArrayList<DataPoint>> p_array;
-    protected Object latestPreview;
-	private RunSSLVisualizer visualizer = null;
-    /** after how many instances do we repaint the streampanel?
-     *  the GUI becomes very slow with small values
-     * */
+    protected DoubleVector observedClassDistribution;
+    protected AutoExpandVector<AttributeClassObserver> attributeObservers;
  
-    /* amount of instances to process in one step*/
-    
+    // Clustering Variables
+    private ExampleStream m_stream0;
+
     /* the measure collections contain all the measures */
     private MeasureCollection[] m_measures0 = null;
     private MeasureCollection[] m_measures1 = null;
-
-    /* left and right stream panel that datapoints and clusterings will be drawn to */
-    private StreamPanel m_streampanel0;
-    private StreamPanel m_streampanel1;
-
-    /* panel that shows the evaluation results */
-
-    /* panel to hold the graph */
-
-    /* reference to the visual panel */
-    private SSLVisualTab m_visualPanel;
     
-    /* reference to the visual panel */
-    private SSLSetupTab m_setupPanel;
-    
-    /** after how many instances do we repaint the streampanel?
-     *  the GUI becomes very slow with small values
-     * */
-    private int m_redrawInterval = 1000;
-
     /* all possible clusterings */
     //not pretty to have all the clusterings, but otherwise we can't just redraw clusterings
- 
-    /* all possible clusterings */
-    //not pretty to have all the clusterings, but otherwise we can't just redraw clusterings
-   
-    /* decayHorizon defines amount of relevant instances; older instances will be dropped;
+    private Clustering gtClustering0 = null;
+    private Clustering macro0 = null;
+    private Clustering micro0 = null;
+    
+    protected AbstractClusterer[] clusterseed;
+	protected int[][] boundarylabeled;
+	protected int trainSize;
+
+
+    protected ArrayList<AbstractClusterer> clusterer = new ArrayList<>();
+    protected ArrayList<Clustering> foundClustering = new ArrayList<>();
+	protected ArrayList<Double> cluster_weights = new ArrayList<>();
+	
+	ArrayList<mCentroid> GT_Centroids = new ArrayList<mCentroid>(); 
+	ArrayList<mCentroid> macro_Centroids = new ArrayList<mCentroid>(); 
+	ArrayList<mCentroid> micro_Centroids = new ArrayList<mCentroid>(); 
+
+	mCentroid gtcentroid; 
+
+    /* amount of relevant instances; older instances will be dropped;
     creates the 'sliding window' over the stream;
     is strongly connected to the decay rate and decay threshold*/
-    //decayHorizon
-    private int WindowSize ;
-
+    private int batch_size;
     
-    /* the decay threshold defines the minimum weight of an instance to be relevant */
-    private double Weight = 0.01;
-    
-    /** the pause interval, being read from the gui at startup */
-    public static final int initialPauseInterval = 1000;
-    
-	public SSLVisualTab visualPanel;
-
-	private double acc = 0.0;
-	private double size = 0.0;
-	private double pre_labeling_ratio = 0.0;
+	protected int num_classes;
 
 
-	private boolean ShowClusters;
-
-	private boolean needscale;
+    /* Base clustering option
 	
-	  long start_label = 0;
-	  long end_label = 0;
-	  
-	  private ArrayList<Double[]> valuesMinMaxDiff = null;
+	   public ListOption clusturerListOption = new ListOption(
+	           "clusturer",
+	            'q',
+	            "The cluster to combine.",
+	            new ClassOption("clusturer", ' ', "", Clusterer.class,
+	            "ClusterGenerator"),
+	            new Option[]{
+	                new ClassOption("", ' ', "", Clusterer.class,
+	                "ClusterGenerator"),
+	                new ClassOption("", ' ', "", Clusterer.class,
+	                "clustream.WithKmeans"),
+	                new ClassOption("", ' ', "", Clusterer.class, 
+	                "clustream.Clustream")},
+	            ',');
+*/
+	public ListOption clusturerListOption = new ListOption(
+	           "clusturer",
+	            'q',
+	            "The cluster to combine.",
+	            new ClassOption("clusturer", ' ', "", Clusterer.class,
+	            "clustream.Clustream -k 49"),
+	            new Option[]{
+	                new ClassOption("", ' ', "", Clusterer.class,
+	                "clustream.Clustream -k 49"),
+	                },
+	            ',');
+	
+    
+    public IntOption periodOption = new IntOption("period", 'p',
+            "Period between Learner removal, creation, and weight update.", 50,
+            1, Integer.MAX_VALUE);
+
+	protected long epochs=0; 
+	protected long testepochs=1; 
+
+    protected int clusterbagSize;
+	protected int labelAssigned=0;
+	protected int correctlabelAssigned=0;
+	protected int clusterCount=0;
+
+	protected double correctlabelAssignedRatio=0.0;
+	
+    LinkedList<DataPoint> pointBuffer= null;
+    LinkedList<DataPoint> labeledData= null;
+
+
+    
+    ArrayList<DataPoint> pointarray = null;
+
+    
+	private Classifier classifier_GT;
+	private Classifier classifier_CLA;
+	private Classifier classifier_CLU;
+
+
+	private boolean foundboundary;
+	
+	private boolean pre_labeling_Started;
+	protected double GT_ACC, CLU_ACC = 0,CLA_ACC = 0,Final_ACC=0,CLU_ACC_pre = 0,CLA_ACC_pre = 0;
+	private LearningPerformanceEvaluator Final_evaluator,GT_evaluator, CLA_evaluator,CLU_evaluator,CLA_pre_evaluator,CLU_pre_evaluator;
+
+	private int labeling_state = 0;
+	
+	 boolean overlap;
+
+	    @Override
+	    public void trainOnInstanceImpl(Instance inst) {
+			
+
+	         this.epochs++;
+
+	    		//Instance is labeled
+	     		
+	    	  	DataPoint point0 = new DataPoint(inst,(int) this.epochs);
+
+	     		labeledData.add(point0);
+	    	
+	           
+	       }
 
 	
-    protected void InduceLabelScarcity(Example<Instance>  scarsetrainInst, long epochs) {
- 	   long lab_ratio = 7;
+    @Override
+    public double[] getVotesForInstance(Instance inst) {
+    	
+    	if(testepochs == 1 || testepochs == 2 ||  testepochs == 3  )
+    		System.out.println(testepochs + " , " + inst);
+    	if(testepochs == 4  )
+    		System.out.println(" .. " );
+    	if(testepochs == 298 || testepochs == 299 ||  testepochs == 300  )
+    		System.out.println(testepochs + " , " + inst);
+    	
+        initClustering(inst, testepochs);
 
-        //mobin //set instance 0,2,3,4,7,8 unlabeled
-        // if (epochs == 0 || epochs == 2 || epochs == 3 || epochs == 4 || epochs == 7 || epochs == 15)
-     	
- 	   Instance inst = scarsetrainInst.getData();
- 	   
- 	   
-   	   switch (this.m_dUlRateTrain.getChosenIndex()) {
-         // case 0: //"2% evenly distributed"
-        	 // if (epochs == 0) 
-        	   //  System.out.println("2% initial of " + this.instanceLimitOption.getValue() +" is :" +this.instanceLimitOption.getValue()/50 );
+        if (this.testepochs % batch_size  == 0 ) 
+        {
+  	          ProcessClustering();
+  	          calculateNewLabeledData();   
+        }
+        
+   	 double[] Pr_cluster = new double[num_classes];
+
+        if (this.trainingWeightSeenByModel > 0.0) 
+        	Pr_cluster = knnClassification(inst);
         	
-        //	  if (epochs % 50 != 0)
-        	 	//  ScarseLabel(inst);
-	  
-        	 // break;
-       case 0:  // first 50 labeled
-    	 
-     	  
-    	   if(epochs >= 50 ) 
-   	
-     	    ScarseLabel(inst);
-    	  
-     	  break;
-     	  
-       case 1:  //0.5
-      	  
-    	   if(epochs > (int) (this.instanceLimitOption.getValue()* 0.005) ) 
-    		   	
-        	    ScarseLabel(inst);
-     	  
-      	  break;
+        this.testepochs++;
+        return Pr_cluster;
 
-        
-          case 2:  //"50% initial of each batch"
-
-
-          	//  if (epochs == 1)  
-          	//  System.out.println("5% of each of each batch " + this.sampleFrequencyOption.getValue() +" is :" +(this.sampleFrequencyOption.getValue()/100)*5 );
-             
-          	 if (epochs % this.sampleFrequencyOption.getValue() == 0) {
-          		start_label= epochs;
-           		end_label= epochs+(this.sampleFrequencyOption.getValue()/100)*1;
-
-              	 // System.out.println(" UL " + start);
-          	 }
-     		if(epochs >= start_label && epochs <= end_label && this.sampleFrequencyOption.getValue() >1 || epochs <= this.sampleFrequencyOption.getValue()   ) {}
-    		else {
-      	    ScarseLabel(inst);
-    		}
-    		if(this.sampleFrequencyOption.getValue() == 1) {
-    			if(epochs % 2 == 1) 
-    				ScarseLabel(inst);
-    			
-    			
-    		
-         
-         	 
-       		}
-       		
-       	 break;
-        	 case 3://"100% labeled"
-          	
-        /*  	 
-          	 if (epochs % this.sampleFrequencyOption.getValue() == 0) {
-            	  
-            	  //scarcity begins after first batch
-            	  
-            	  System.out.println(epochs);
-            	  if (epochs >= (this.instanceLimitOption.getValue()/100)*5) 
-                	  System.out.println(" UL " + epochs);
-
-             		 ScarseLabel(inst);
-            	  
-              }
-          	  
-           	  if (epochs >= (this.instanceLimitOption.getValue()/100)*5) 
-            		 ScarseLabel(inst);
-            		 
-            		 */
-           	  break;
-           	  
-          case 4:  //random
-        	  
-        	  prob = Math.random()%100;
-           	
-           	if ( prob >= (double) this.m_dUlRate.getValue()/100 && inst.classIsMissing() == false)
-           	      ScarseLabel(inst);
-       	  
-        	  break;
-          default:    
-	   } 
-  	   /*
-  	  if(lab_ratio !=0) {
-  	   
-  	  if (epochs % lab_ratio == 0 || epochs % lab_ratio == 1
-     		|| epochs % lab_ratio != 2 || epochs % lab_ratio == 3
-     		|| epochs % lab_ratio== 4 || epochs % lab_ratio == 5)
-  	    {
-     		
-           	inst.classIsMissing(true);
-         	inst.PreserveTrueLabel(inst.classValue());
-         	inst.changeClassValue(inst);
-         	//System.out.print(epochs+ " u "); 
-         	unLabeledCount++;
-      		System.out.println(epochs+ " u"); 
-
-         }
-  	  
-  	  else {
-  	  }
-  	 
-  	  } */
- 	 
- 	   
      }
-
-
-	public void ScarseLabel(Instance inst) {
-		 inst.classIsMissing(true);
-		 inst.PreserveTrueLabel(inst.classValue());
-		 inst.changeClassValue(inst);
-		 unLabeledCount++;
-	} 
-      
     
- protected void InduceNoise(Example<Instance>  scarsetrainInst) {
-	 //added variable to induce noise in the stream
-        
-     	if ((double) noiseLevelOption2.getValue()  > Math.random()%10 )
-         {
- 			int numAttsOption = (int) scarsetrainInst.getData().numAttributes();
-         	
-     		double [] sample = new double [numAttsOption]; 
-     		
-     		for (int j = 0; j < numAttsOption; j++) {
-                scarsetrainInst.getData().setValue(j, instanceRandom.nextDouble());
-            }
-          }
-                     	
-     } 
- 
-    @Override
-    public Class<?> getTaskResultType() {
-        return LearningCurve.class;
-    }
 
-    @Override
-    protected Object doMainTask(TaskMonitor monitor, ObjectRepository repository) {
-    	ShowClusters = true;
-        SSLearner SSLearner = (SSLearner) getPreparedClassOption(this.learnerOption);
-        ExampleStream stream = (ExampleStream) getPreparedClassOption(this.streamOption);
-        
-        
-        LearningPerformanceEvaluator evaluator = (LearningPerformanceEvaluator) getPreparedClassOption(this.evaluatorOption);
-        LearningCurve learningCurve = new LearningCurve(
-                "learning evaluation instances");
+	private void calculateNewLabeledData() {
+		double[] Pr_cluster;
 
-        if (evaluator instanceof WindowClassificationPerformanceEvaluator) {
-            if (widthOption.getValue() != 1000) {
-                System.out.println("DEPRECATED! Use EvaluatePrequential -e (WindowClassificationPerformanceEvaluator -w " + widthOption.getValue() + ")");
-                 return learningCurve;
-            }
-        }
-        if (evaluator instanceof EWMAClassificationPerformanceEvaluator) {
-            //((EWMAClassificationPerformanceEvaluator) evaluator).setalpha(alphaOption.getValue());
-            if (alphaOption.getValue() != .01) {
-                System.out.println("DEPRECATED! Use EvaluatePrequential -e (EWMAClassificationPerformanceEvaluator -a " + alphaOption.getValue() + ")");
-                return learningCurve;
-            }
-        }
-        if (evaluator instanceof FadingFactorClassificationPerformanceEvaluator) {
-            //((FadingFactorClassificationPerformanceEvaluator) evaluator).setalpha(alphaOption.getValue());
-            if (alphaOption.getValue() != .01) {
-                System.out.println("DEPRECATED! Use EvaluatePrequential -e (FadingFactorClassificationPerformanceEvaluator -a " + alphaOption.getValue() + ")");
-                return learningCurve;
-            }
-        }
-        
-        SSLearner.setModelContext(stream.getHeader());
-        int maxInstances = this.instanceLimitOption.getValue();
-        long instancesProcessed = 0;
-        long testinstancesProcessed = 0;
-
-        long timestamp = 0;
-        int maxSeconds = this.timeLimitOption.getValue();
-        int secondsElapsed = 0;
-        monitor.setCurrentActivity("Evaluating learner...", -1.0);
-
-        File dumpFile = this.dumpFileOption.getFile();
-        PrintStream immediateResultStream = null;
-        if (dumpFile != null) {
-            try {
-                if (dumpFile.exists()) {
-                    immediateResultStream = new PrintStream(
-                            new FileOutputStream(dumpFile, true), true);
-                } else {
-                    immediateResultStream = new PrintStream(
-                            new FileOutputStream(dumpFile), true);
-                }
-            } catch (Exception ex) {
-                throw new RuntimeException(
-                        "Unable to open immediate result file: " + dumpFile, ex);
-            }
-        }
-        //File for output predictions
-        File outputPredictionFile = this.outputPredictionFileOption.getFile();
-        PrintStream outputPredictionResultStream = null;
-        if (outputPredictionFile != null) {
-            try {
-                if (outputPredictionFile.exists()) {
-                    outputPredictionResultStream = new PrintStream(
-                            new FileOutputStream(outputPredictionFile, true), true);
-                } else {
-                    outputPredictionResultStream = new PrintStream(
-                            new FileOutputStream(outputPredictionFile), true);
-                }
-            } catch (Exception ex) {
-                throw new RuntimeException(
-                        "Unable to open prediction result file: " + outputPredictionFile, ex);
-            }
-        }
-        boolean firstDump = true;
-        boolean preciseCPUTiming = TimingUtils.enablePreciseTiming();
-        long evaluateStartTime = TimingUtils.getNanoCPUTimeOfCurrentThread();
-        long lastEvaluateStartTime = evaluateStartTime;
-        double RAMHours = 0.0;
-        
-        SSLearner.Initialize(sampleFrequencyOption.getValue(),Weight,stream.getHeader().numClasses(), m_dUlRateTrain.getChosenIndex(),evaluator);
-
-        WindowSize=sampleFrequencyOption.getValue();
-
-        if (monitor.resultVisualRequested() == false )
-			try {
-				Thread.sleep(initialPauseInterval);
-			} catch (InterruptedException e) {
-				// TODO Auto-generated catch block
-				e.printStackTrace();
-			}
-
-       initVisualizer(monitor, stream); 
-       
-    	if(m_normalize.getChosenIndex()==0)
-   	    	valuesMinMaxDiff = readMinMaxDiffValues(stream);
-   		
-        stream.restart();
-       
-        while (stream.hasMoreInstances() && ((maxInstances < 0) || (testinstancesProcessed <= maxInstances)) && ((maxSeconds < 0) || (secondsElapsed < maxSeconds))) {
-          
-        	Example trainInst = stream.nextInstance();
-        	if (m_normalize.getChosenIndex()==0 && valuesMinMaxDiff != null) 
-        		trainInst = NormalizeInstance(trainInst).copy();		
-             Example testInst = trainInst.copy();            
-             InduceLabelScarcity(trainInst, instancesProcessed);
-             drawPoints(instancesProcessed, trainInst);  
-             
-            if(instancesProcessed >=50) {
-            	testinstancesProcessed ++;
-                double[] prediction = SSLearner.getVotesForInstance(testInst);
-            
-            // Output prediction
-                if (outputPredictionFile != null) {
-                	int trueClass = (int) ((Instance) trainInst.getData()).classValue();
-                	outputPredictionResultStream.println(Utils.maxIndex(prediction) + "," + (
-                	((Instance) testInst.getData()).classIsMissing() == true ? " ? " : trueClass));
-                }
-            evaluator.addResult(testInst, prediction);
-            }
-            
-            SSLearner.trainOnInstance(trainInst);
-          
-            instancesProcessed++;
-          
-           
-         // chunk finish
-            if (instancesProcessed >= this.sampleFrequencyOption.getValue()) {
-            	 
-               if (testinstancesProcessed % this.sampleFrequencyOption.getValue() == 0 || stream.hasMoreInstances() == false  ) {
-            	   DrawClusters(SSLearner, instancesProcessed);  
-                                   
-                long evaluateTime = TimingUtils.getNanoCPUTimeOfCurrentThread();
-                double time = TimingUtils.nanoTimeToSeconds(evaluateTime - evaluateStartTime);
-                double timeIncrement = TimingUtils.nanoTimeToSeconds(evaluateTime - lastEvaluateStartTime);
-                double RAMHoursIncrement = SSLearner.measureByteSize() / (1024.0 * 1024.0 * 1024.0); //GBs
-                RAMHoursIncrement *= (timeIncrement / 3600.0); //Hours
-                RAMHours += RAMHoursIncrement;
-                lastEvaluateStartTime = evaluateTime;
-                learningCurve.insertEntry(new LearningEvaluation(new Measurement[]{
-                   new Measurement("learning evaluation instances",testinstancesProcessed),
-                   new Measurement("Scarcity Ratio",((double)(unLabeledCount)/(double)(testinstancesProcessed))*100),
-                   new Measurement("evaluation time ("+ (preciseCPUTiming ? "cpu ": "") + "seconds)",time),
-                   new Measurement("model cost (RAM-Hours)",RAMHours) },evaluator, SSLearner));
-                 acc  +=  learningCurve.getMeasurement(learningCurve.numEntries()-1, 5);
-                 pre_labeling_ratio  +=  learningCurve.getMeasurement(learningCurve.numEntries()-1, 16);
-                 size  +=  learningCurve.getMeasurement(learningCurve.numEntries()-1, 11);    
-                 
-              }  // chunk finish
-            }
-            if (instancesProcessed % INSTANCES_BETWEEN_MONITOR_UPDATES == 0) {
-                if (monitor.taskShouldAbort()) {return null;}
-                long estimatedRemainingInstances = stream.estimatedRemainingInstances();
-                if (maxInstances > 0) {long maxRemaining = maxInstances - instancesProcessed;
-                    if ((estimatedRemainingInstances < 0) || (maxRemaining < estimatedRemainingInstances)) {estimatedRemainingInstances = maxRemaining;} }
-                monitor.setCurrentActivityFractionComplete(estimatedRemainingInstances < 0 ? -1.0 : (double) instancesProcessed / (double) (instancesProcessed + estimatedRemainingInstances));
-                if (monitor.resultPreviewRequested()) {monitor.setLatestResultPreview(learningCurve.copy());}
-                secondsElapsed = (int) TimingUtils.nanoTimeToSeconds(TimingUtils.getNanoCPUTimeOfCurrentThread() - evaluateStartTime);
-            }
-        } // End while stream end loop
-        
-
-        if (immediateResultStream != null) {immediateResultStream.close();}
-        if (outputPredictionResultStream != null) {outputPredictionResultStream.close();}
-
-        if (visualizer !=null && ShowClusters == true && pointarray0 !=null)  
-           	visualizer.drawPointPanels((int)instancesProcessed, 0, Weight);
-       
-        try {
-			WritetoFile(learningCurve, SSLearner, stream);
-		} catch (FileNotFoundException e) {
-			// TODO Auto-generated catch block
-			e.printStackTrace();
-		} catch (IOException e) {
-			// TODO Auto-generated catch block
-			e.printStackTrace();
-		}
-        System.out.println("Accuracy: " + acc/ learningCurve.numEntries());
-        System.out.println("Learning Entries: " + learningCurve.numEntries());
-
-        System.out.println("Ensemble Size: " + size/ learningCurve.numEntries());
-        System.out.println("Drifts: " +       (int) (learningCurve.getMeasurement(learningCurve.numEntries()-1, 12)));
-        System.out.println("Warnings: " +       (int) (learningCurve.getMeasurement(learningCurve.numEntries()-1, 13)));
-       
-        return learningCurve;
-
-    }
-
-
-	private ArrayList<Double[]> readMinMaxDiffValues(ExampleStream stream) {
-		ArrayList<Double[]> valuesMinMaxDiff = null;
-
-		valuesMinMaxDiff = new ArrayList<Double[]>();
-		for (int i = 0; i < stream.getHeader().numAttributes(); i++) {
-			Double[] values =  {Double.POSITIVE_INFINITY,Double.NEGATIVE_INFINITY,0.0};
-			valuesMinMaxDiff.add(values);
-		}
-		System.out.print("Reading arff file for normalization...");
-		int counter = 0;
+	
+		labeledData.clear();
 		
-		while (stream.hasMoreInstances()) {
-			Example instance = stream.nextInstance();
-			Instance norminst = (Instance) instance.getData();
-			int a = 0;
-			for (int i = 0; i < stream.getHeader().numAttributes(); i++) {
-				
-					double value = norminst.value(i);
-					if(value < valuesMinMaxDiff.get(a)[0])
-						valuesMinMaxDiff.get(a)[0] = value;
-					if(value > valuesMinMaxDiff.get(a)[1])
-						valuesMinMaxDiff.get(a)[1] = value;
-					a++;
-				
-			}
-
-			//show some progress
-			counter++;
-			if(counter >= 10000){
-				counter = 0;
-				System.out.print(".");
-			}
-		}
-		System.out.println("done!");
-		for (int i = 0; i < valuesMinMaxDiff.size(); i++) {
-			valuesMinMaxDiff.get(i)[2]=valuesMinMaxDiff.get(i)[1]-valuesMinMaxDiff.get(i)[0];
-		}
-		return valuesMinMaxDiff;
-	}
-
-
-	private Example NormalizeInstance(Example instances) {
-    	Instance norminst = (Instance) instances.getData();
-
-		for (int i = 0; i < norminst.numAttributes() ; i++) {
-			if (valuesMinMaxDiff.get(i)[2] != 1 &&		// Already normalized
-				valuesMinMaxDiff.get(i)[2] != 0 &&		// Max. value is 0 (unable to be normalized)
-				i != norminst.classIndex()) {		// Class label is not subject to be normalized
-				double v = norminst.value(i);
-				v = (v - valuesMinMaxDiff.get(i)[0]) / valuesMinMaxDiff.get(i)[2];
-				norminst.setValue(i, v);
-			}
-		}
-		
-
-		return new InstanceExample(norminst);
-		
-		
-	}
-
-
-	public void DrawClusters(SSLearner SSLearner, long instancesProcessed) {
-		if ( visualizer !=null && ShowClusters == true && SSLearner.getPointarray() !=null)  {
+		for (int i = 0; i < pointBuffer.size(); i++) {
 			
-			 clusterIndex = m_streampanel0.getActiveCluster();
-		 	 pointarray0=SSLearner.getPointarray();
-		  	 if (pointarray0.size() > 0) 
-		  	 gtClustering0 = new Clustering(pointarray0);
-		  	  
+			Pr_cluster = getClusterWeightedVote(pointBuffer.get(i));
+			if(Utils.sum(Pr_cluster) >0) { // make sure the prediction is not 0,0
+
+			Instance inst= InstancePreLabeling(Pr_cluster,pointBuffer.get(i), CLU_pre_evaluator,1);  // 1=update cluster ACC 
+			labeledData.add((DataPoint) inst);
+			}
+			else
+			{
+	            System.out.println("prediction 0:0");
+
+			}
+			
+			
+			//pointBuffer.clear();
+		
+        }
+		
+		
+		
+		
+	}
+
+	public void ClusterLearning(Instance inst) {
+		double[] Pr_cluster;
+		Pr_cluster = getClusterWeightedVote(inst);
+		if(Utils.sum(Pr_cluster) >0) { // make sure the prediction is not 0,0
+			   	   
+		InstancePreLabeling(Pr_cluster,inst, CLU_pre_evaluator,1);  // 1=update cluster ACC 
+
+		}
+	}
+    
+    
+    //Clustering methods
+	private Instance InstancePreLabeling(double[] pr, Instance inst, LearningPerformanceEvaluator Pre_evaluator, int i) {
+	      //cluster size, i.e. when cluster has formed and for only instances marked as unlabeled
+		pre_labeling_Started = true;
+		InstanceExample example = new InstanceExample(inst);
+		example.instance.AssignClassLabel(inst.getTrueLabel());
+
+		//if(!checkNoise(inst))
+	     //  System.out.println("Noise Label");
+		Pre_evaluator.addResult(example, pr);
+		Final_ACC = Pre_evaluator.getPerformanceMeasurements()[1].getValue();
+		//if(Pre_evaluator.getPerformanceMeasurements()[1].getValue() < 100) {
+		if(i == 1)
+			CLU_ACC_pre = Pre_evaluator.getPerformanceMeasurements()[1].getValue();
+		else
+			CLA_ACC_pre = Pre_evaluator.getPerformanceMeasurements()[1].getValue();
+		//}
+		//isInstance of 
+      //System.out.println("Started Assigning Labels");
+
+	    inst.setClassValue(Utils.maxIndex(pr));
+
+		this.labelAssigned ++;
+		//inst.AssignClassLabel(Utils.maxIndex(Pr_cluster));
 		 
-		      clusterer = SSLearner.GetfoundClustering();
-				
-				Clustering macro = clusterer.get(clusterIndex);
-				
-		         	Clustering micro = ((SSLClassifier) SSLearner).getMacro();  	 
+		if(Utils.maxIndex(pr) == inst.getTrueLabel() )
+			correctlabelAssigned++;
+		correctlabelAssignedRatio = ((double)correctlabelAssigned/(double)labelAssigned)*100; 	   
+
+//if (correctlabelAssignedRatio <100 && this.epochs > 1000)
+	//System.out.println("First Wrong");
 		
-		    visualizer.drawClusterings(SSLearner,macro, micro);
-		 }
+		 inst.setPrelabelStatus(true);
+		 
+		 return inst;
+		
 	}
 
+	public double[] getClusterWeightedVote(Instance inst) {
 
-	public void drawPoints(long instancesProcessed, Example trainInst) {
-		
+        double[] Pr_cluster = new double[num_classes];
+        
+	    SphereCluster Kernel = null;
+	    SphereCluster closestKernel = null;
+	    
+	 //   if (checkoverlap() == true)
+	   // 	return classifier_CLA.getVotesForInstance(inst);
+	   // else
+	   // {
 
-		if (ShowClusters == true){   
-			
+			for ( int i = 0; i < foundClustering.size(); i++ ) { 
+
+				
+	 	    Clustering c = foundClustering.get(i);
+	 	    if(c!=null) {
+			double minDistance = Double.MAX_VALUE;
+
+			for ( int j = 0; j < c.size(); j++ ) {
+				Kernel = (SphereCluster) c.get(j);
+				
+				double distance =  Kernel.getCenterDistance(inst) ; 
 	
-		    if(instancesProcessed%m_redrawInterval==0 && visualizer !=null ) {
-		        m_streampanel0.applyDrawDecay(WindowSize/(float)(m_redrawInterval));
-		        m_streampanel1.applyDrawDecay(WindowSize/(float)(m_redrawInterval));
-		    }
-      
-         }   
-		
-		if (visualizer !=null && m_visualPanel.isEnabledDrawPoints() ) {
-		   visualizer.drawpoints(trainInst,instancesProcessed);
-		   visualizer.drawpointsPrelabeled(trainInst,instancesProcessed);
-    
-		 }
-	    if(instancesProcessed%m_redrawInterval==0 && visualizer !=null ) {
-	        m_streampanel0.applyDrawDecay(WindowSize/(float)(m_redrawInterval));
-	        m_streampanel1.applyDrawDecay(WindowSize/(float)(m_redrawInterval));
-	    }
-	}
+				if (distance < minDistance  ) {
+				   minDistance = distance;
+				   closestKernel=Kernel;
 
+				} 
+			}
+	 	     	       			  
+	 	    
+            if(closestKernel != null) {
 
-	public void initVisualizer(TaskMonitor monitor, ExampleStream stream) {
-		if(ShowClusters == true) {   
-		    if (monitor.resultVisualRequested() ) 
-		           visualPanel = (SSLVisualTab) monitor.getVisualPreview();
-		     
-		     if (visualPanel != null) {
-		         //System.out.println("visualPanel created");
-		         m_setupPanel = visualPanel.getSSLSetupTab();
-		         m_visualPanel = visualPanel;
-		         m_streampanel0 = visualPanel.getLeftStreamPanel();
-		         m_streampanel1 = visualPanel.getRightStreamPanel();
-		         m_streampanel0.clearPoints();
-		         m_streampanel1.clearPoints();
+			double yHat_cluster = closestKernel.getId();
 
+			 // if(yHat_cluster != -1 || minDistance <= Kernel.getRadius()  ) {
 
-		         visualizer = new RunSSLVisualizer(m_visualPanel,m_setupPanel,stream) ;
-		     } //else
-		    
-		     if (visualPanel == null) 
-		       System.out.println("visualPanel NOT created");
-		     else {
-	            if (visualizer !=null && m_visualPanel.isEnabledDrawMicroclustering()) 
-	            	visualizer.setMicroLayerVisibility(true);
-	            else
-	            	visualizer.setMicroLayerVisibility(false);
-	            
-	            if (visualizer !=null && m_visualPanel.isEnabledDrawGroundTruth()) 
-	            	visualizer.setGroundTruthVisibility(true);
-	            else
-	            	visualizer.setGroundTruthVisibility(false);
-	            
-	           if (visualizer !=null && m_visualPanel.isEnabledDrawClustering()) 
-	        	   visualizer.setMacroVisibility(true);
-	        	   else
-	            	   visualizer.setMacroVisibility(false);
-		     }
-		}
-	}
+				  if(yHat_cluster != -1) {
 
+				  Pr_cluster[(int) yHat_cluster] += 1;
+				  
+				  }
+			  
+			  }
 
-	public void WritetoFile(LearningCurve learningCurve, SSLearner learner, ExampleStream stream) throws FileNotFoundException, IOException {
-		
-		String s = stream.getHeader().getRelationName();
-		//Streing m = stream.;
-		String filename = "12";
-		String filenamefull = "12";
-		String SheetName= null;
-
-		    //Synthetic Data Streams
-		    if (s.contains("UG_2C_2D")) filename = "UG_2C_2D";
-		    if (s.contains("UG_2C_3D")) filename = "UG_2C_3D";
-		    if (s.contains("1CSurr")) filename = "1CSurr";
-		    if (s.contains("4CR")) filename = "4CR";
-		    if (s.contains("4CRE-V2")) filename = "4CRE-V2";
-
-		
-		    if (s == "generators.SEAGenerator -f 4") filename = "SEA_Sudden";
-		    if (s == "generators.STAGGERGenerator -f 3") filename = "stagger";
-			if (s.contains("RandomTreeGenerator")) filename = "RandomTree";
-			if (s.contains("LED")) filename = "LED";
-			if (s.contains("Wave")) filename = "Wave";
-			if (s.contains("Hyperplane")) filename = "Hyperplane";
-			if (s == "generators.SEAGenerator -f 2") filename = "SEA_Mixed";
-			if (s.contains("RandomRBFGeneratorEvents")) filename = "RandomRBF";
-			if (s.contains("Agrawal") ) filename = "AGRAWAL_s";
-		    if (this.mixedOption.isSet() && s.contains("Agrawal") ) filename = "AGRAWAL_Mixed";
-		    
-		    //Real World DataSets
-			if (s == "sensor-all-56") filename = "sensor";
-			if (s.contains("covtype") ) filename = "covtype";
-			
-	        String classifier = learner.getLearnerName();
-	        if (classifier.contains("Weighted"))
-		           SheetName = "WMA";
-		        if (classifier.contains("DWMNB"))
-		           SheetName = "DWM-NB";
-		        if (classifier.contains("Naive"))
-			           SheetName = "DWM-NB";
-		        if (classifier.contains("DWMHT"))
-		          SheetName = "DWM-HT";
-		        if (classifier.contains("Hoeffding"))
-			           SheetName = "DWM-HT";
-		        if (classifier.contains("Adaptive"))
-		           SheetName = "ARF";
-		        if (classifier.contains("HDWM"))
-		           SheetName = "Lite";
-		        if( SheetName == null)
-		        	   SheetName = "Sheet1";
-			
-			XSSFWorkbook workbook = null;
-			filenamefull="C:/Test/AutoResults/" + filename + ".xlsx";
-
-			FileInputStream fis = new FileInputStream(filenamefull);
-			XSSFSheet sheet = null;
-			 int rows = learningCurve.numEntries();
-			 
-		        try {
-		        	
-		            workbook = new XSSFWorkbook(fis);
-		                    	      
-		            sheet = workbook.getSheet(SheetName);
-		            
-		            //delete existing data
-		            for (int i = sheet.getLastRowNum(); i >= 0; i--) {
-		            	if(sheet.getRow(i) != null)
-		            	  sheet.removeRow(sheet.getRow(i));
-		            	}
-		            
-		            Row row = sheet.createRow(0);
-
-		            int rowNum = 0;
-
-		                // create new row
-		                row = sheet.createRow(rowNum++);
-		                row.createCell(0).setCellValue(filename);
-		                row = sheet.createRow(rowNum++);
-
-		               // create summary  Header in Excel
-		                
-		              	for (int i=0; i< learningCurve.getMeasurementArray().size(); i++)
-		              		
-		                    row.createCell(i).setCellValue(learningCurve.getMeasurementName(i)); 
-		                
-		                
-		                row = sheet.createRow(rowNum++);
-		                // insert summary measurements in Excel
-		                
-
-		            	for (int j=0; j< learningCurve.getMeasurementArray().size(); j++) {
-		                	double sum = 0.0;
-
-		            	    for (int i=0; i< learningCurve.numEntries(); i++) {
-		            	    	sum += learningCurve.getMeasurement(i, j);  
-		            	    }
-		            	 
-		                row.createCell(j).setCellValue(sum/learningCurve.numEntries()); 
-
-		            };
-		            
-		            row = sheet.createRow(rowNum++);
-		            row.createCell(0).setCellValue("Drifts");
-		            row.createCell(1).setCellValue("Warnings");
-		            row = sheet.createRow(rowNum++);
-		            row.createCell(0).setCellValue((int) (learningCurve.getMeasurement(learningCurve.numEntries()-1, 12)));
-		            row.createCell(1).setCellValue((int) (learningCurve.getMeasurement(learningCurve.numEntries()-1, 13)));
-		            
-		            
-		            row = sheet.createRow(rowNum++);
-
-		                
-		                // insert measurements in Excel
-		                for (int i=0; i< learningCurve.numEntries(); i++) {
-		                    row = sheet.createRow(rowNum++);
-
-		                	for (int j=0; j< learningCurve.getMeasurementArray().size(); j++) 
-		                        row.createCell(j).setCellValue(learningCurve.getMeasurement(i, j));       
-		                	
-		                }
-		                	
-		            
-	      
-	            // Writing sheet data
-	            FileOutputStream outputStream = new FileOutputStream(filenamefull);
-	            workbook.write(outputStream);
-	            System.out.println("Write Success");
-	            
-	            if(workbook != null)
-                    workbook.close();
+           // }
             
-        }catch (EncryptedDocumentException | IOException e) {
-            // TODO Auto-generated catch block
-            e.printStackTrace();
+	 	    }
+		}
+
+		return Pr_cluster;
+	    //}
+	}
+	  
+   	@Override
+	public void Initialize(int sizeofbatch, double weight, int numofclasses , int t_size, LearningPerformanceEvaluator evaluator) {
+   		   num_classes = numofclasses;
+   		   batch_size = sizeofbatch;
+	       boundarylabeled = new int[clusterer.size()][num_classes];
+	       trainSize = t_size;
+	       this.Final_evaluator = evaluator;
+	       this.GT_evaluator= (LearningPerformanceEvaluator) evaluator.copy();
+	       this.CLA_evaluator = (LearningPerformanceEvaluator) evaluator.copy();
+	       this.CLU_evaluator = (LearningPerformanceEvaluator) evaluator.copy();
+	       this.CLA_pre_evaluator = (LearningPerformanceEvaluator) evaluator.copy();
+	       this.CLU_pre_evaluator = (LearningPerformanceEvaluator) evaluator.copy();
+
+
+	     //  m_stream0_decay_threshold = m_stream0.getDecayThreshold();
+
+	       //m_stream0_decay_rate = (Math.log(1.0/m_stream0_decay_threshold)/Math.log(2)/batch_size);
+	       
+	}
+
+    private void initClustering(Instance inst, long timestamp) {
+    	
+	  	DataPoint point0 = new DataPoint(inst,(int) this.epochs);
+
+     //	if(inst.getScarceStatus() == false && !checkNoise(inst)  ) {  //if instance is labeled use it for GT clusters 
+
+		while(pointBuffer.size() > batch_size){
+			pointBuffer.removeFirst();
         }
-	        finally {
-            try {
-                if(workbook != null)
-                    workbook.close();
-            } catch (IOException e) {
-                // TODO Auto-generated catch block
-                e.printStackTrace();
+		
+    		  	pointBuffer.add(point0);
+    		 	
+        		for (int i = 0; i < clusterer.size(); i++) {
+              		Instance traininst = new DenseInstance(point0);
+                               
+                      if(clusterer.get(i).keepClassLabel())
+                       traininst.setDataset(point0.dataset());
+                      else
+                    	  traininst.deleteAttributeAt(point0.classIndex());       
+                       clusterer.get(i).trainOnInstanceImpl(traininst); 
+        		 }
+	}
+    
+	public double[] knnClassification(Instance testinst) {
+			
+		double distances[] = new double[labeledData.size()];
+        double[] Pr_cluster = new double[num_classes+1];
+
+		double minDist = Integer.MAX_VALUE;
+		int bestPoint = 0;
+		
+		
+		
+		for (int i=0; i< labeledData.size(); i++){
+			
+			distances[i] = this.getDistance(testinst, labeledData.get(i));
+
+		      if (distances[i]  < minDist) {
+		          minDist = distances[i] ;
+		          bestPoint = i;
+		        }
+		}
+		
+		
+   			 
+	    Pr_cluster[(int) labeledData.get(bestPoint).classValue()] += 1;
+
+         if(labeledData.get(bestPoint).classValue() != testinst.classValue() )
+         {
+	       //System.out.println(testepochs + " error true class " + testinst.classValue() + " KNN " + labeledData.get(bestPoint).classValue());
+	       
+         }
+	     
+
+			  		
+		return Pr_cluster;
+		
+	}
+
+	private double getDistance(Instance point, Instance testinst){
+    	 double sum=0;
+         for (int i=0; i<point.numInputAttributes(); i++)
+         {
+             double diff = point.valueInputAttribute(i)-testinst.valueInputAttribute(i);
+             sum += diff*diff;
+         }
+         return Math.sqrt(sum);
+    }	
+    	
+
+
+	public void ProcessClustering() {
+		
+        boundarylabeled = new int[clusterer.size()][num_classes];
+	    pointarray = new ArrayList<DataPoint>(pointBuffer);
+
+	    // find centroids
+
+	    
+	    Centroids(pointBuffer);
+	    
+	    
+    	gtClustering0 = new Clustering(labeledData);
+	
+	
+	 
+	 GT_Centroids.clear();
+	for (int i = 0; i < gtClustering0.size(); i++) {
+		// System.out.println(gtClustering0.get(i).getId() + " C " + gtClustering0.get(i).getCenter()[0]);
+
+		 gtcentroid = new mCentroid(gtClustering0.get(i).getCenter(), gtClustering0.get(i).getGroundTruth());
+	     GT_Centroids.add(gtcentroid);}
+	    if(gtClustering0 == null){
+	    
+
+		}
+		
+		clusterCount = gtClustering0.size();
+		 if(clusterCount == 0 )
+			 return;
+		// Loop over the Clusterers
+		foundClustering.clear();
+		
+
+		for (int i = 0; i < this.clusterer.size(); i++) {
+			
+			AbstractClusterer cluster = (AbstractClusterer) clusterer.get(i);
+			
+			 if(gtClustering0!= null){
+		            if(cluster instanceof ClusterGenerator)
+		                ((ClusterGenerator) cluster).setSourceClustering(gtClustering0);
+		        }
+
+				macro0 = cluster.getClusteringResult();
+
+				
+				
+				// need boundary labeling here for macro0 from GTclustering
+				
+			     //macro0 = gtClustering0;
+
+		        if(cluster.implementsMicroClusterer()){
+		            micro0 = cluster.getMicroClusteringResult();
+		            
+		            
+		            if(macro0 == null && micro0 != null){
+		                //TODO: we need a Macro Clusterer Interface and the option for kmeans to use the non optimal centers
+		                macro0 = moa.clusterers.KMeans.gaussianMeans(gtClustering0, micro0);
+		            }
+		          //label boundaries here using instances in the pointarray
+					//if(macro0!= null && macro0.size() >0)
+					//LabelBoundaries(macro0,labeledData);
+					 
+		      
+		            	foundClustering.add(macro0); 
+		        }
+		}
+
+  
+	}
+	
+   	private void LabelBoundaries(Clustering macro, LinkedList<DataPoint> labeledData) {
+   		
+   		
+      	SphereCluster closestKernel = null;
+        SphereCluster Kernel = null;
+
+        //cluster size, i.e. when cluster has formed and for only instances marked as unlabeled
+    
+        for(int i =0; i < macro.size(); i++ ) {   // iterate over macro
+       	 int closestCluster = 0;
+       	 double minDistance = Double.MAX_VALUE; 
+       	// System.out.println("macro "+ macro.get(i).getCenter()[0] + " centroids " + macro.get(i).getCenter()[1] );
+
+       	 
+ 		double distances[] = new double[labeledData.size()];
+        double[] Pr_cluster = new double[num_classes];
+
+		
+		double minDist = Integer.MAX_VALUE;
+		int bestPoint = 0;
+		
+		for (int j=0; j< labeledData.size(); j++){
+			distances[j] = this.getDistance(macro.get(i).getCenter(), labeledData.get(j));
+		      if (distances[j]  < minDist) {
+		          minDist = distances[j] ;
+		          bestPoint = j;
+		        }
+		}
+		
+
+       	         
+            macro.get(i).setGroundTruth(labeledData.get(bestPoint).classValue());
+            macro.get(i).setId(labeledData.get(bestPoint).classValue());
+            
+            
+            
+    		
+       	 
+        }   // end iterate over macro
+        
+
+      
+     
+        
+      } // GT Labeling 
+	
+	
+	private double getDistance(double[] center, DataPoint testinst) {
+		double distance = 0.0;
+		//get the center through getCenter so subclass have a chance
+		
+		for (int i = 0; i < center.length; i++) {
+			double d = center[i] - testinst.value(i);
+			distance += d * d;
+		}
+		return Math.sqrt(distance);
+	}
+
+	public void Centroids(List<? extends Instance> points){
+        HashMap<Integer, Integer> labelMap = classValues(points);
+        int dim = points.get(0).dataset().numAttributes()-1;
+
+        int numClasses = labelMap.size();
+        int noiseLabel;
+        
+        Attribute classLabel = points.get(0).dataset().classAttribute();
+        int lastLabelIndex = classLabel.numValues() - 1;
+        if (classLabel.value(lastLabelIndex) == "noise") {
+        	noiseLabel = lastLabelIndex;
+        } else {
+        	noiseLabel = -1;
+        }
+
+        ArrayList<Instance>[] sorted_points = (ArrayList<Instance>[]) new ArrayList[numClasses];
+        ArrayList<Double>[] centers = (ArrayList<Double>[]) new ArrayList[numClasses];
+
+        
+        for (int i = 0; i < numClasses; i++) {
+            sorted_points[i] = new ArrayList<Instance>();
+            centers[i] = new ArrayList<Double>();
+
+        }
+        for (Instance point : points) {
+            int clusterid = (int)point.classValue();
+            if(clusterid == noiseLabel) continue;
+            sorted_points[labelMap.get(clusterid)].add((Instance)point);
+        }
+        
+        for (int i = 0; i < numClasses; i++) {
+        	if(!sorted_points[i].isEmpty())
+        	centers[i].addAll(findCentroids(sorted_points[i], numClasses))  ;
+        }
+		 
+	}
+	
+	public ArrayList<Double> findCentroids(ArrayList<Instance> points, int numClasses){
+		
+         ArrayList<Double> tempcentroids =  new ArrayList<Double>();
+   
+
+        for (int i = 0; i < numClasses; i++) {
+            ArrayList<Double> temp_points = (ArrayList<Double>) new ArrayList();
+        	
+        	for (Instance point : points) {
+        		temp_points.add(point.value(i));
+        	
+        	}
+        	
+        	double m = median(temp_points);
+        	tempcentroids.add(m);
+        	
+        }
+
+		
+		
+return tempcentroids;
+		
+
+	}
+	
+    private Double median(ArrayList<Double> temp_points) {
+    	
+    	double m=0;
+    	Collections.sort(temp_points);
+
+    	if(temp_points.size()%2==1)
+    	{
+    		//m=a[((n+1)/2)-1];
+    		m= temp_points.get(((temp_points.size()+1)/2)-1);
+    	}
+    	else
+    	{
+    		//m=(in[n/2-1]+in[n/2])/2;
+    		m= (temp_points.get((temp_points.size()/2)-1) + temp_points.get(temp_points.size()/2))/2;
+
+    		
+    		//m=(a[n/2-1]+a[n/2])/2;
+    	}
+		return m;
+	}
+
+
+	/**
+     * @param points 
+     * @return an array with the min and max class label value
+     */
+    public static HashMap<Integer, Integer> classValues(List<? extends Instance> points){
+        HashMap<Integer,Integer> classes = new HashMap<Integer, Integer>();
+        int workcluster = 0;
+        boolean hasnoise = false;
+        for (int i = 0; i < points.size(); i++) {
+            int label = (int) points.get(i).classValue();
+            if(label == -1){
+                hasnoise = true;
+            }
+            else{
+                if(!classes.containsKey(label)){
+                    classes.put(workcluster,workcluster);
+                    workcluster++;
+                }
             }
         }
-    
-    
+        if(hasnoise)
+            classes.put(-1,workcluster);
+        return classes;
+    }
 	
-	}
+	@Override
+	public void prepareForUseImpl(TaskMonitor monitor,
+	            ObjectRepository repository) {
+   		
+		classifier_GT = ((Classifier) getPreparedClassOption(this.baseLearnerOption)).copy();
+		classifier_CLA = ((Classifier) getPreparedClassOption(this.baseLearnerOption)).copy();
+		classifier_CLU = ((Classifier) getPreparedClassOption(this.baseLearnerOption)).copy();
 
+
+		    Option[] clusterensembleBagOption = this.clusturerListOption.getList();
+		         
+	        this.clusterseed = new AbstractClusterer[clusterensembleBagOption.length];
+
+            //for clustering
+  	            
+   	            pointBuffer= new LinkedList<DataPoint>();
+   	            labeledData= new LinkedList<DataPoint>();
+
+
+          
+	            clusterbagSize = clusterensembleBagOption.length;
+	          
+	
+		      
+		      for (int i = 0; i < clusterbagSize; i++) {
+	   	            
+	   	         this.clusterseed[i]= (AbstractClusterer) (AbstractClusterer) ((ClassOption) clusterensembleBagOption[i]).materializeObject(monitor, repository);
+	   	            clusterer.add(clusterseed[i]);
+	   	            this.cluster_weights.add(1.0);
+		   		
+		   		
+	   	        if (monitor.taskShouldAbort()) {
+	                return;
+	            }
+	   	        
+	            monitor.setCurrentActivity("Preparing clusrers " + (i + 1) + "...",
+	                    -1.0);
+	            this.clusterseed[i].prepareForUse(monitor, repository);
+	            if (monitor.taskShouldAbort()) {
+	                return;
+	            }
+		      }
+		      
+	       super.prepareForUseImpl(monitor, repository);
+	    }
+
+    @Override
+    public void resetLearningImpl() {
+    	
+    	 this.observedClassDistribution = new DoubleVector();
+         this.attributeObservers = new AutoExpandVector<AttributeClassObserver>(); 	
+
+    }
+     
+    @Override
+    public boolean isRandomizable() {
+        return false;
+    }
+
+    @Override
+    protected Measurement[] getModelMeasurementsImpl() {
+
+        Measurement[] measurements = null;
+        
+        if(baseLearnerOption.getValueAsCLIString().toString().contains("Naive") || baseLearnerOption.getValueAsCLIString().toString().contains("Hoeffding") )
+        {
+            measurements = new Measurement[8];
+
+            measurements[0] = new Measurement("members size", 1);
+            measurements[1] = new Measurement("Drifts detected", 0);
+            measurements[2] = new Measurement("Warnings detected", 0);
+            measurements[3] = new Measurement("Labels Assigned", labelAssigned);
+            measurements[4] = new Measurement("Correct Labels Assigned", correctlabelAssigned);
+            measurements[5] = new Measurement("Ratio", correctlabelAssignedRatio );
+            measurements[6] = new Measurement("Cluster Count", clusterCount);
+            measurements[7] = new Measurement("Labeling State", labeling_state);
+
+        }
+        if(baseLearnerOption.getValueAsCLIString().toString().contains("HDWM"))
+
+        {
+        
+        measurements = new Measurement[8];
+        measurements[0] = new Measurement("members size", classifier_GT.getModelMeasurements()[2].getValue());
+        measurements[1] = new Measurement("Drifts detected", classifier_GT.getModelMeasurements()[3].getValue());
+        measurements[2] = new Measurement("Warnings detected", classifier_GT.getModelMeasurements()[4].getValue());
+        measurements[3] = new Measurement("Labels Assigned", labelAssigned);
+        measurements[4] = new Measurement("Correct Labels Assigned", correctlabelAssigned);
+        measurements[5] = new Measurement("Ratio", correctlabelAssignedRatio );
+        measurements[6] = new Measurement("Cluster Count", clusterCount);
+        measurements[7] = new Measurement("Labeling State", labeling_state);
+
+        }
+        if(baseLearnerOption.getValueAsCLIString().toString().contains("DWM") || baseLearnerOption.getValueAsCLIString().toString().contains("Weighted"))
+        {
+            measurements = new Measurement[8];
+
+            measurements[0] = new Measurement("members size", classifier_GT.getModelMeasurements()[2].getValue());
+            measurements[1] = new Measurement("Drifts detected", 0);
+            measurements[2] = new Measurement("Warnings detected", 0);
+            measurements[3] = new Measurement("Labels Assigned", labelAssigned);
+            measurements[4] = new Measurement("Correct Labels Assigned", correctlabelAssigned);
+            measurements[5] = new Measurement("Ratio", correctlabelAssignedRatio );
+            measurements[6] = new Measurement("Cluster Count", clusterCount);
+            measurements[7] = new Measurement("Labeling State", labeling_state);
+
+        }
+          
+      	 // System.out.println("D " + numberOfDrifts );
+      // System.out.println(DriftLocation_global );
+
+        return measurements;
+  
+    }
 
 	@Override
-	public List<ALTaskThread> getSubtaskThreads() {
+    public void getModelDescription(StringBuilder out, int indent) {
+
+    }
+
+	@Override
+	public ArrayList<AbstractClusterer> Getclusterer() {
 		// TODO Auto-generated method stub
-		return new ArrayList<ALTaskThread>();
+		return clusterer ;
+	}
+	@Override
+	public ArrayList<Clustering> GetfoundClustering() {
+		// TODO Auto-generated method stub
+		return foundClustering ;
+	}
+
+	@Override
+	public Clustering getMacro() {
+		// TODO Auto-generated method stub
+		return micro0;
 	}
 	
+	@Override
+	public ArrayList<DataPoint> getPointarray() {
+		// TODO Auto-generated method stub
+		return pointarray;
+	}
+	
+	@Override
+	public String getLearnerName() {
+		// TODO Auto-generated method stub
+		return baseLearnerOption.getValueAsCLIString().toString();
+	}
+
+
+
+
 
 	
-    
 }
+
+
+
+
+
+
+
+
